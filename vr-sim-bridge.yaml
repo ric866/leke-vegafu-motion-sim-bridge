@@ -1,0 +1,317 @@
+esphome:
+  name: "vr-sim-bridge-dynamic"
+  friendly_name: "VR Direct Drive Bridge"
+  includes:
+    - <WiFiUdp.h>
+
+# --- BOARD SETUP ---
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# --- STATUS LED ---
+status_led:
+  pin: 23
+
+# --- WIFI SETUP ---
+wifi:
+  id: wifi_component
+  use_address: 192.168.42.140
+  networks:
+  - ssid: "Your Wifi"
+    password: "Your Wifi Password"
+
+  - ssid: "lcdzyoursimrig"
+    password: "lcdz1234"
+    manual_ip:
+     static_ip: 192.168.15.150
+     gateway: 192.168.15.1
+     subnet: 255.255.255.0
+  ap:
+    ssid: "VR Bridge Fallback Hotspot"
+    password: "***SUPER SECRET PASSWORD***"
+
+captive_portal:
+
+web_server:
+  port: 80
+
+logger:
+  level: DEBUG
+
+ota:
+  - platform: esphome
+
+# --- TEXT INPUT (Dynamic IP) ---
+text:
+  - platform: template
+    id: target_ip
+    name: "Target Controller IP"
+    icon: "mdi:ip-network"
+    optimistic: true
+    min_length: 7
+    max_length: 15
+    initial_value: "192.168.15.201"
+    restore_value: true
+    mode: text 
+
+# --- NUMBER INPUTS ---
+number:
+  # 1. Target Port
+  - platform: template
+    id: target_port
+    name: "Target Controller Port"
+    icon: "mdi:ethernet"
+    optimistic: true
+    min_value: 1
+    max_value: 65535
+    step: 1
+    initial_value: 7408
+    restore_value: true
+    mode: box
+
+  # 2. Manual Slider: Motor 1
+  - platform: template
+    id: man_axis_1
+    name: "Motor 1 Position"
+    min_value: 0
+    max_value: 100
+    step: 1
+    optimistic: true
+    mode: slider
+
+  # 3. Manual Slider: Motor 2
+  - platform: template
+    id: man_axis_2
+    name: "Motor 2 Position"
+    min_value: 0
+    max_value: 100
+    step: 1
+    optimistic: true
+    mode: slider
+
+  # 4. Manual Slider: Motor 3
+  - platform: template
+    id: man_axis_3
+    name: "Motor 3 Position"
+    min_value: 0
+    max_value: 100
+    step: 1
+    optimistic: true
+    mode: slider
+
+# --- RELAYS ---
+switch:
+
+  - platform: template
+    id: debug_logging
+    name: "Enable Debug Logging"
+    icon: "mdi:bug"
+    optimistic: true
+
+  - platform: template
+    id: manual_mode
+    name: "MANUAL OVERRIDE MODE"
+    optimistic: true
+
+  - platform: gpio
+    pin: 32
+    id: r_back_p1
+    name: "R1 - Egg 1 Back Pressure"
+  
+  - platform: gpio
+    pin: 33
+    id: r_back_p2
+    name: "R2 - Egg 2 Back Pressure"
+
+  - platform: gpio
+    pin: 25
+    id: r_ticklers
+    name: "R3 - Leg Ticklers (Both)"
+
+  - platform: gpio
+    pin: 26
+    id: r_air_low
+    name: "R4 - Lower Air (Both)"
+
+  - platform: gpio
+    pin: 27
+    id: r_air_high
+    name: "R5 - Upper Air (Both)"
+
+  - platform: gpio
+    pin: 14
+    id: r_vibe_1
+    name: "R6 - Egg 1 Vibrate"
+
+  - platform: gpio
+    pin:
+      number: 12
+      ignore_strapping_warning: true
+    id: r_vibe_2
+    name: "R7 - Egg 2 Vibrate"
+
+  - platform: gpio
+    pin: 13
+    id: r_lights
+    name: "R8 - Entry Lights"
+    inverted: false
+
+# --- MAIN LOGIC LOOPS ---
+interval:
+  - interval: 10ms
+    then:
+      - lambda: |-
+          static WiFiUDP udp;
+          static bool setup_done = false;
+          static uint32_t last_packet_time = 0;
+          static bool rig_is_active = false;
+          static int manual_counter = 0; // For rate limiting manual mode
+
+          // --- 1. SETUP (START IN SAFE MODE) ---
+          if (!setup_done) {
+            if (id(wifi_component).is_connected()) {
+              udp.begin(8410); // Match Simulator PC Source Port
+              setup_done = true;
+              id(r_lights).turn_on(); 
+              ESP_LOGI("setup", "Bridge Started. UDP Bound to Source Port 8410.");
+            }
+            return;
+          }
+
+          // Variables to hold the final output values for this loop
+          long outM1 = 0, outM2 = 0, outM3 = 0;
+          bool should_send = false; // Flag to trigger sending a packet
+          bool manual = id(manual_mode).state;
+
+          // =========================================================
+          //      LOGIC SELECTION
+          // =========================================================
+          
+          if (manual) {
+            // --- MANUAL MODE ---
+            // Rate Limiter: Send roughly every 100ms (every 10th loop)
+            if (++manual_counter >= 10) {
+                manual_counter = 0;
+                
+                // Read Sliders & Scale
+                outM1 = (long)(id(man_axis_1).state * 1000);
+                outM2 = (long)(id(man_axis_2).state * 1000);
+                outM3 = (long)(id(man_axis_3).state * 1000);
+                
+                should_send = true;
+                
+                // Debug Log for Manual
+                if (id(debug_logging).state) {
+                   ESP_LOGI("manual", "Manual Target: %ld, %ld, %ld", outM1, outM2, outM3);
+                }
+            }
+          } 
+          else {
+            // --- PASS-THROUGH (NORMAL) MODE ---
+            
+            // Safety Cutoff (Timeout > 2s)
+            if (rig_is_active && (millis() - last_packet_time > 2000)) {
+                ESP_LOGW("safety", "Signal Lost - System Safe");
+                id(r_lights).turn_on();
+                // Turn off all relays
+                id(r_back_p1).turn_off(); id(r_back_p2).turn_off();
+                id(r_ticklers).turn_off(); id(r_vibe_1).turn_off(); id(r_vibe_2).turn_off();
+                id(r_air_low).turn_off(); id(r_air_high).turn_off();
+                rig_is_active = false;
+            }
+
+            int packetSize = udp.parsePacket();
+            if (packetSize >= 22) {
+                last_packet_time = millis();
+                
+                // Wake up logic
+                if (!rig_is_active) {
+                   ESP_LOGI("status", "Data Detected - Rig Running");
+                   id(r_lights).turn_off();
+                   rig_is_active = true;
+                }
+
+                std::vector<uint8_t> data(packetSize);
+                udp.read(data.data(), packetSize);
+
+                // Basic Header Check
+                if (data[0] == 255 && data[1] == 255) {
+                    // Decode Motors
+                    long raw_m1 = (data[2] << 8) | data[3];
+                    long raw_m2 = (data[4] << 8) | data[5];
+                    long raw_m3 = (data[6] << 8) | data[7];
+
+                    // Scale
+                    outM1 = (long)((double)raw_m1 / 65535.0 * 100000.0);
+                    outM2 = (long)((double)raw_m2 / 65535.0 * 100000.0);
+                    outM3 = (long)((double)raw_m3 / 65535.0 * 100000.0);
+
+                    // Decode & Update Relays
+                    int r1=data[9]; int r2=data[11]; int r3=data[13];
+                    int r4=data[15]; int r5=data[17]; int r6=data[19]; int r7=data[21];
+
+                    if (r1 > 0) id(r_back_p1).turn_on(); else id(r_back_p1).turn_off();
+                    if (r2 > 0) id(r_back_p2).turn_on(); else id(r_back_p2).turn_off();
+                    if (r3 > 0) id(r_ticklers).turn_on(); else id(r_ticklers).turn_off();
+                    if (r4 > 0) id(r_air_low).turn_on(); else id(r_air_low).turn_off();
+                    if (r5 > 0) id(r_air_high).turn_on(); else id(r_air_high).turn_off();
+                    if (r6 > 0) id(r_vibe_1).turn_on(); else id(r_vibe_1).turn_off();
+                    if (r7 > 0) id(r_vibe_2).turn_on(); else id(r_vibe_2).turn_off();
+
+                    // Update UI Sliders to match current position
+                    id(man_axis_1).publish_state(outM1 / 1000.0);
+                    id(man_axis_2).publish_state(outM2 / 1000.0);
+                    id(man_axis_3).publish_state(outM3 / 1000.0);
+
+                    should_send = true;
+
+                    if (id(debug_logging).state) {
+                        ESP_LOGI("bridge", "In: %ld %ld %ld -> Out: %ld %ld %ld", raw_m1, raw_m2, raw_m3, outM1, outM2, outM3);
+                    }
+                }
+            }
+          }
+
+          // =========================================================
+          //      UNIFIED BUILD & SEND BLOCK
+          // =========================================================
+          if (should_send) {
+            #pragma pack(push, 1)
+            struct ImaxPacket {
+              uint16_t confirmCode; uint16_t passCode; uint16_t functionCode; uint16_t objectChannel;
+              uint16_t acceptCode;  uint16_t replyCode;
+              uint32_t absTime;     uint32_t portOut;
+              int32_t axis1; int32_t axis2; int32_t axis3; 
+              int32_t axis4; int32_t axis5; int32_t axis6;
+              uint16_t padding;     uint32_t footer;
+            };
+            #pragma pack(pop)
+
+            ImaxPacket pkt;
+            pkt.confirmCode = htons(0x55AA); 
+            pkt.passCode = htons(0x0000); 
+            pkt.functionCode = htons(0x1301); 
+            pkt.objectChannel = htons(0x0001); // Fixed
+            pkt.acceptCode = htons(0xFFFF); 
+            pkt.replyCode = htons(0xFFFF);     // Fixed
+            
+            // Dynamic Time/Counter
+            pkt.absTime = htonl(millis()); 
+            pkt.portOut = htonl(millis() & 0xFFFF); 
+            
+            pkt.axis1 = htonl(outM1); 
+            pkt.axis2 = htonl(outM2); 
+            pkt.axis3 = htonl(outM3);
+            pkt.axis4 = 0; pkt.axis5 = 0; pkt.axis6 = 0;
+            pkt.padding = 0; 
+            pkt.footer = htonl(0x5678ABCD);
+
+            std::string ip = id(target_ip).state;
+            int port = (int)id(target_port).state;
+            
+            udp.beginPacket(ip.c_str(), port);
+            udp.write((uint8_t*)&pkt, sizeof(pkt));
+            udp.endPacket();
+          }
