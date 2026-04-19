@@ -1,0 +1,20 @@
+{
+  // Tell Python where your custom modules (like adb_backend) live
+  "python.analysis.extraPaths": [
+    "./src",
+    "./src"
+  ],
+  // Explicitly assign formatters by language
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.formatOnSave": true
+  },
+  // Hide the massive node_modules folder from VSCode's file search
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.venv": true
+  },
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestPath": "/usr/local/py-utils/bin/pytest",
+  "python-envs.defaultEnvManager": "ms-python.python:system"
+}

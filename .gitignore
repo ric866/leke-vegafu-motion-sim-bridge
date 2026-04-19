@@ -1,0 +1,18 @@
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Virtual Environments
+venv/
+.env
+
+# Outputs (CRITICAL)
+*.log
+
+# IDE Settings
+.idea/
+
+# Binaries (Better to let users provide their own)
+*.exe
+*.dll
+*.zip

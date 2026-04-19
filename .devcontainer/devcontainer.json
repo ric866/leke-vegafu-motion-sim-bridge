@@ -1,0 +1,30 @@
+{
+    "name": "LEKE Vegafu Motion Controller Development Environment",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": ".."
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.vscode-pylint",
+                "charliermarsh.ruff"
+            ],
+            "settings": {
+                "python.testing.pytestEnabled": true,
+                "editor.formatOnSave": true
+            }
+        }
+    },
+    "containerEnv": {
+        "DISPLAY": "host.docker.internal:0.0"
+    },
+    "remoteUser": "vscode",
+    "runArgs": [
+        "--privileged",
+        "-v",
+        "/dev/bus/usb:/dev/bus/usb"
+    ],
+    "postCreateCommand": "pip install pre-commit && pre-commit install && pre-commit run --all-files"
+}
