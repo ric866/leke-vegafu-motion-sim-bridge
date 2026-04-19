@@ -6,3 +6,4 @@ bandit==1.7.5
 pytest==7.4.0
 beautifulsoup4==4.14.3
 requests==2.31.0
+matplotlib==3.7.2

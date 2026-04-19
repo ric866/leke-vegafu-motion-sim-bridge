@@ -5,7 +5,7 @@ import time
 class IMAXProtocol:
     @staticmethod
     def pack_motion_data(m1, m2, m3):
-        """Original 0x1301 Absolute time multi-axis motion data"""
+        """0x1301 Absolute time multi-axis motion data"""
         t_stamp = int(time.time() * 1000) & 0xFFFFFFFF
         return struct.pack(
             ">HHHHHHIIiiiiiiHI",
@@ -30,7 +30,7 @@ class IMAXProtocol:
     @staticmethod
     def pack_read_register(reg_address, is_pa=True):
         """0x1101 Master read slave register operation"""
-        obj_channel = 1 if is_pa else 0  # 1: PAxx, 0: DPxx [cite: 132, 136]
+        obj_channel = 1 if is_pa else 0  # 1: PAxx, 0: DPxx
         return struct.pack(
             ">HHHBBHH",
             0x55AA,  # Confirm Code
@@ -39,7 +39,7 @@ class IMAXProtocol:
             obj_channel,  # Object Channel
             0xFF,  # Accept Code (ff: all)
             0x00,  # Reply Code (0: none/default)
-            reg_address,  # RegStart Address (e.g., 0x07 for PA07)
+            reg_address,  # RegStart Address
             1,  # Reg Num (read 1 register)
         )
 
