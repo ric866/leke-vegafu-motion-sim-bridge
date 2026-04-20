@@ -32,6 +32,8 @@ class NetworkBackend:
             "hz": 20,
             "max_delta_auto": 8000,
             "max_delta_manual": 2000,
+            "min_limit": 0,
+            "max_limit": 240000,  # NEW: Axis stroke limits
         }
         if os.path.exists(self.config_file):
             try:
@@ -114,6 +116,8 @@ class NetworkBackend:
                                     "hz",
                                     "max_delta_auto",
                                     "max_delta_manual",
+                                    "min_limit",
+                                    "max_limit",
                                 ]
                             }
                         )
@@ -255,14 +259,24 @@ class NetworkBackend:
                             )
 
                 # --- 3. Determine Targets & Run State Machine ---
+
+                # Fetch limits
+                mn = self.config["min_limit"]
+                mx = self.config["max_limit"]
+
+                # Clamp gameplay data and manual sliders to user limits
                 if flypt_data:
                     last_active_target = [
-                        int(raw_in[0] * self.scale_factor),
-                        int(raw_in[1] * self.scale_factor),
-                        int(raw_in[2] * self.scale_factor),
+                        min(max(int(raw_in[0] * self.scale_factor), mn), mx),
+                        min(max(int(raw_in[1] * self.scale_factor), mn), mx),
+                        min(max(int(raw_in[2] * self.scale_factor), mn), mx),
                     ]
                 if manual:
-                    last_active_target = [out_m1, out_m2, out_m3]
+                    last_active_target = [
+                        min(max(out_m1, mn), mx),
+                        min(max(out_m2, mn), mx),
+                        min(max(out_m3, mn), mx),
+                    ]
 
                 target_m = [0, 0, 0]
 
@@ -276,7 +290,7 @@ class NetworkBackend:
                     target_m = last_active_target
 
                 elif sys_state == "STOPPING":
-                    target_m = [0, 0, 0]
+                    target_m = [0, 0, 0]  # Bypasses min_limit to physically park
                     if current_m == target_m:
                         sys_state = "STOPPED"
                         silence_countdown = int(self.config["hz"] * 2)

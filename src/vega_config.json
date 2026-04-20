@@ -7,5 +7,7 @@
     "safe_pos": 120000,
     "hz": 20,
     "max_delta_auto": 8000,
-    "max_delta_manual": 2000
+    "max_delta_manual": 2000,
+    "min_limit": 1000,
+    "max_limit": 230000
 }

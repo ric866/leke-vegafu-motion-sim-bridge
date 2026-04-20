@@ -29,7 +29,7 @@ class VegaGUI:
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         self.root.title("Vega Mission Control (Modular & Verbose)")
-        self.root.geometry("850x850")
+        self.root.geometry("850x880")
 
         # --- State Variables ---
         self.manual_mode = tk.BooleanVar(value=False)
@@ -49,16 +49,24 @@ class VegaGUI:
         self.config_file = "vega_config.json"
         cfg = self._load_config()
 
-        self.conf_bind_ip = tk.StringVar(value=cfg["bind_ip"])
-        self.conf_rx_port = tk.StringVar(value=str(cfg["rx_port"]))
-        self.conf_tx_port = tk.StringVar(value=str(cfg["tx_port"]))
-        self.conf_vega_ip = tk.StringVar(value=cfg["vega_ip"])
-        self.conf_vega_port = tk.StringVar(value=str(cfg["vega_port"]))
-        self.conf_safe_pos = tk.StringVar(value=str(cfg["safe_pos"]))
+        self.conf_bind_ip = tk.StringVar(value=cfg.get("bind_ip", "127.0.0.1"))
+        self.conf_rx_port = tk.StringVar(value=str(cfg.get("rx_port", 10000)))
+        self.conf_tx_port = tk.StringVar(value=str(cfg.get("tx_port", 8410)))
+        self.conf_vega_ip = tk.StringVar(value=cfg.get("vega_ip", "192.168.15.201"))
+        self.conf_vega_port = tk.StringVar(value=str(cfg.get("vega_port", 7408)))
+        self.conf_safe_pos = tk.StringVar(value=str(cfg.get("safe_pos", 120000)))
 
-        self.conf_hz = tk.StringVar(value=str(cfg["hz"]))
-        self.conf_max_delta_auto = tk.StringVar(value=str(cfg["max_delta_auto"]))
-        self.conf_max_delta_manual = tk.StringVar(value=str(cfg["max_delta_manual"]))
+        self.conf_hz = tk.StringVar(value=str(cfg.get("hz", 20)))
+        self.conf_max_delta_auto = tk.StringVar(
+            value=str(cfg.get("max_delta_auto", 8000))
+        )
+        self.conf_max_delta_manual = tk.StringVar(
+            value=str(cfg.get("max_delta_manual", 2000))
+        )
+
+        # New Stroke Limits
+        self.conf_min_limit = tk.StringVar(value=str(cfg.get("min_limit", 0)))
+        self.conf_max_limit = tk.StringVar(value=str(cfg.get("max_limit", 240000)))
 
         self.pa_params = {
             0x00: "Working Mode (0: 485, 10: CAN)",
@@ -97,6 +105,8 @@ class VegaGUI:
             "hz": 20,
             "max_delta_auto": 8000,
             "max_delta_manual": 2000,
+            "min_limit": 0,
+            "max_limit": 240000,
         }
         if os.path.exists(self.config_file):
             try:
@@ -172,22 +182,36 @@ class VegaGUI:
             row=3, column=1, sticky="w"
         )
 
-        ttk.Label(frame_config, text="Auto Max Delta:").grid(
+        # New Stroke Limits Row
+        ttk.Label(frame_config, text="Min Stroke Limit:").grid(
             row=4, column=0, sticky="e", padx=5, pady=2
         )
-        ttk.Entry(frame_config, textvariable=self.conf_max_delta_auto, width=10).grid(
+        ttk.Entry(frame_config, textvariable=self.conf_min_limit, width=10).grid(
             row=4, column=1, sticky="w"
         )
-        ttk.Label(frame_config, text="Manual/Park Delta:").grid(
+        ttk.Label(frame_config, text="Max Stroke Limit:").grid(
             row=4, column=2, sticky="e", padx=5, pady=2
         )
-        ttk.Entry(frame_config, textvariable=self.conf_max_delta_manual, width=10).grid(
+        ttk.Entry(frame_config, textvariable=self.conf_max_limit, width=10).grid(
             row=4, column=3, sticky="w"
+        )
+
+        ttk.Label(frame_config, text="Auto Max Delta:").grid(
+            row=5, column=0, sticky="e", padx=5, pady=2
+        )
+        ttk.Entry(frame_config, textvariable=self.conf_max_delta_auto, width=10).grid(
+            row=5, column=1, sticky="w"
+        )
+        ttk.Label(frame_config, text="Manual/Park Delta:").grid(
+            row=5, column=2, sticky="e", padx=5, pady=2
+        )
+        ttk.Entry(frame_config, textvariable=self.conf_max_delta_manual, width=10).grid(
+            row=5, column=3, sticky="w"
         )
 
         ttk.Button(
             frame_config, text="APPLY & SAVE SETTINGS", command=self.push_config
-        ).grid(row=5, column=0, columnspan=4, pady=10)
+        ).grid(row=6, column=0, columnspan=4, pady=10)
 
         # --- System Controls ---
         frame_sys = ttk.LabelFrame(tab, text="System Control", padding=10)
@@ -378,11 +402,7 @@ class VegaGUI:
 
         try:
             debug_arg = "1" if self.debug_mode.get() else "0"
-
-            # Check if running as a PyInstaller compiled executable
             if getattr(sys, "frozen", False):
-                # When frozen, sys.executable points to VegaMissionControl.exe
-                # We launch a second instance of ourself, passing the secret flag
                 self.vis_process = subprocess.Popen(
                     [sys.executable, "--run-visualizer", "9001", debug_arg]
                 )
@@ -390,7 +410,6 @@ class VegaGUI:
                     "[SYSTEM] Launched Live 3D Visualizer from inside compiled EXE."
                 )
             else:
-                # When running normally from source code (e.g., via VS Code)
                 script_path = os.path.join(os.path.dirname(__file__), "visualizer.py")
                 self.vis_process = subprocess.Popen(
                     [sys.executable, script_path, "9001", debug_arg]
@@ -415,9 +434,10 @@ class VegaGUI:
                 "hz": max(1, int(self.conf_hz.get())),
                 "max_delta_auto": max(1, int(self.conf_max_delta_auto.get())),
                 "max_delta_manual": max(1, int(self.conf_max_delta_manual.get())),
+                "min_limit": int(self.conf_min_limit.get()),
+                "max_limit": int(self.conf_max_limit.get()),
             }
 
-            # Save configuration to disk
             try:
                 with open(self.config_file, "w") as f:
                     json.dump(cfg, f, indent=4)
@@ -427,7 +447,6 @@ class VegaGUI:
             except Exception as e:
                 self.log(f"[ERROR] Failed to write config to disk: {e}")
 
-            # Push configuration to backend
             self.cmd_queue.put({"type": "CONFIG", **cfg})
 
         except ValueError:
