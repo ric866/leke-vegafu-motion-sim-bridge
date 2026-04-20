@@ -4,6 +4,7 @@ import time
 import select
 import struct
 import json
+import os
 from protocol import IMAXProtocol
 
 
@@ -15,16 +16,30 @@ class NetworkBackend:
         self.scale_factor = 240000 / 65535.0
         self.vis_port = 9001
 
-        self.config = {
+        self.config_file = "vega_config.json"
+        self.config = self._load_initial_config()
+
+        self.thread = threading.Thread(target=self._network_worker, daemon=True)
+
+    def _load_initial_config(self):
+        defaults = {
             "bind_ip": "127.0.0.1",
             "rx_port": 10000,
             "tx_port": 8410,
             "vega_ip": "192.168.15.201",
             "vega_port": 7408,
             "safe_pos": 120000,
+            "hz": 20,
+            "max_delta_auto": 8000,
+            "max_delta_manual": 2000,
         }
-
-        self.thread = threading.Thread(target=self._network_worker, daemon=True)
+        if os.path.exists(self.config_file):
+            try:
+                with open(self.config_file, "r") as f:
+                    return {**defaults, **json.load(f)}
+            except Exception:
+                pass
+        return defaults
 
     def start(self):
         self.gui_queue.put(
@@ -47,9 +62,13 @@ class NetworkBackend:
         sock_vis = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
         out_m1 = out_m2 = out_m3 = self.config["safe_pos"]
-        active = manual = debug = vis_running = False
-        silence_countdown = 40
+        manual = debug = vis_running = False
         last_log_time = 0
+
+        sys_state = "STOPPED"
+        current_m = [0, 0, 0]
+        last_active_target = [self.config["safe_pos"]] * 3
+        silence_countdown = 0
 
         try:
             sock_rx.bind((self.config["bind_ip"], self.config["rx_port"]))
@@ -92,6 +111,9 @@ class NetworkBackend:
                                     "vega_ip",
                                     "vega_port",
                                     "safe_pos",
+                                    "hz",
+                                    "max_delta_auto",
+                                    "max_delta_manual",
                                 ]
                             }
                         )
@@ -119,32 +141,41 @@ class NetworkBackend:
                                 {"type": "LOG", "data": f"[NET REBIND FAIL] {e}"}
                             )
 
-                    elif cmd["type"] == "STATE":
-                        active, manual, debug = (
-                            cmd["active"],
-                            cmd["manual"],
-                            cmd.get("debug", False),
-                        )
-                        vis_running = cmd.get("vis_running", False)
-                        if active or manual:
-                            silence_countdown = 40
-                        if debug:
+                    elif cmd["type"] == "SYS_CMD":
+                        if cmd["cmd"] == "START" and sys_state == "STOPPED":
+                            sys_state = "STARTING"
                             self.gui_queue.put(
-                                {
-                                    "type": "LOG",
-                                    "data": f"[NET STATE] Active:{active}, Manual:{manual}, Debug:{debug}, Vis:{vis_running}",
-                                }
+                                {"type": "STATE_UPDATE", "state": sys_state}
                             )
+                            if debug:
+                                self.gui_queue.put(
+                                    {
+                                        "type": "LOG",
+                                        "data": "[NET STATE] System STARTING...",
+                                    }
+                                )
+                        elif cmd["cmd"] == "STOP" and sys_state in [
+                            "ACTIVE",
+                            "STARTING",
+                        ]:
+                            sys_state = "STOPPING"
+                            self.gui_queue.put(
+                                {"type": "STATE_UPDATE", "state": sys_state}
+                            )
+                            if debug:
+                                self.gui_queue.put(
+                                    {
+                                        "type": "LOG",
+                                        "data": "[NET STATE] System STOPPING (Parking)...",
+                                    }
+                                )
+
+                    elif cmd["type"] == "STATE":
+                        manual, debug = cmd["manual"], cmd.get("debug", False)
+                        vis_running = cmd.get("vis_running", False)
 
                     elif cmd["type"] == "MANUAL_POS":
                         out_m1, out_m2, out_m3 = cmd["m1"], cmd["m2"], cmd["m3"]
-                        if debug:
-                            self.gui_queue.put(
-                                {
-                                    "type": "LOG",
-                                    "data": f"[NET MANUAL IN] Targets -> M1:{out_m1} M2:{out_m2} M3:{out_m3}",
-                                }
-                            )
 
                     elif cmd["type"] == "READ_PARAM":
                         pkt = IMAXProtocol.pack_read_register(cmd["address"])
@@ -152,21 +183,8 @@ class NetworkBackend:
                             sock_tx.sendto(
                                 pkt, (self.config["vega_ip"], self.config["vega_port"])
                             )
-                            if debug:
-                                self.gui_queue.put(
-                                    {
-                                        "type": "LOG",
-                                        "data": f"[NET TX FLASH READ] -> {self.config['vega_ip']}:{self.config['vega_port']} | Payload: {pkt.hex()}",
-                                    }
-                                )
-                        except Exception as e:
-                            if debug:
-                                self.gui_queue.put(
-                                    {
-                                        "type": "LOG",
-                                        "data": f"[NET TX ERROR] Read Param Send Failed: {e}",
-                                    }
-                                )
+                        except Exception:
+                            pass
 
                     elif cmd["type"] == "WRITE_PARAM":
                         pkt = IMAXProtocol.pack_write_register(
@@ -176,21 +194,8 @@ class NetworkBackend:
                             sock_tx.sendto(
                                 pkt, (self.config["vega_ip"], self.config["vega_port"])
                             )
-                            if debug:
-                                self.gui_queue.put(
-                                    {
-                                        "type": "LOG",
-                                        "data": f"[NET TX FLASH WRITE] -> {self.config['vega_ip']}:{self.config['vega_port']} | Payload: {pkt.hex()}",
-                                    }
-                                )
-                        except Exception as e:
-                            if debug:
-                                self.gui_queue.put(
-                                    {
-                                        "type": "LOG",
-                                        "data": f"[NET TX ERROR] Write Param Send Failed: {e}",
-                                    }
-                                )
+                        except Exception:
+                            pass
 
                 # --- 2. Read Network ---
                 try:
@@ -206,14 +211,6 @@ class NetworkBackend:
                         try:
                             while True:
                                 data, addr = s.recvfrom(1024)
-                                if debug:
-                                    self.gui_queue.put(
-                                        {
-                                            "type": "LOG",
-                                            "data": f"[NET RX FLYPT] <- {addr} | Bytes: {len(data)} | Payload: {data.hex()}",
-                                        }
-                                    )
-
                                 if len(data) >= 8 and data[0] == 0xFF:
                                     raw_in[0] = (data[2] << 8) | data[3]
                                     raw_in[1] = (data[4] << 8) | data[5]
@@ -227,17 +224,8 @@ class NetworkBackend:
                         try:
                             while True:
                                 data, addr = s.recvfrom(1024)
-                                if debug:
-                                    self.gui_queue.put(
-                                        {
-                                            "type": "LOG",
-                                            "data": f"[NET RX VEGA RIG] <- {addr} | Bytes: {len(data)} | Payload: {data.hex()}",
-                                        }
-                                    )
-
                                 if len(data) >= 16 and data[0:2] == b"\x55\xaa":
                                     func_code = (data[2] << 8) | data[3]
-
                                     if func_code in (0x1102, 0x1202):
                                         reg_addr = (data[8] << 8) | data[9]
                                         reg_val = struct.unpack(">I", data[12:16])[0]
@@ -248,25 +236,10 @@ class NetworkBackend:
                                                 "value": reg_val,
                                             }
                                         )
-                                        if debug:
-                                            action = (
-                                                "READ"
-                                                if func_code == 0x1102
-                                                else "WRITE"
-                                            )
-                                            self.gui_queue.put(
-                                                {
-                                                    "type": "LOG",
-                                                    "data": f"[NET PARSED FLASH] {action} OK -> PA{reg_addr:02X} = {reg_val}",
-                                                }
-                                            )
-
                                     elif func_code == 0x1302 and len(data) >= 28:
                                         last_feedback = data
-
                                 elif len(data) >= 40 and data[0] == 0x55:
                                     last_feedback = data
-
                         except Exception:
                             pass
 
@@ -280,114 +253,111 @@ class NetworkBackend:
                                     "m3": vals[3],
                                 }
                             )
-                            if debug:
-                                self.gui_queue.put(
-                                    {
-                                        "type": "LOG",
-                                        "data": f"[NET PARSED FEEDBACK] Actuators -> M1:{vals[1]} M2:{vals[2]} M3:{vals[3]}",
-                                    }
-                                )
 
-                # --- 3. Determine Output ---
-                if active or manual:
-                    should_send_motion = True
-                    silence_countdown = 40
-                    if not manual and flypt_data:
-                        out_m1 = int(raw_in[0] * self.scale_factor)
-                        out_m2 = int(raw_in[1] * self.scale_factor)
-                        out_m3 = int(raw_in[2] * self.scale_factor)
-                        self.gui_queue.put(
-                            {
-                                "type": "TARGET_UPDATE",
-                                "m1": out_m1,
-                                "m2": out_m2,
-                                "m3": out_m3,
-                            }
-                        )
-                        if debug:
-                            self.gui_queue.put(
-                                {
-                                    "type": "LOG",
-                                    "data": f"[NET AUTO CALC] Scaled FlyPT -> M1:{out_m1} M2:{out_m2} M3:{out_m3}",
-                                }
-                            )
+                # --- 3. Determine Targets & Run State Machine ---
+                if flypt_data:
+                    last_active_target = [
+                        int(raw_in[0] * self.scale_factor),
+                        int(raw_in[1] * self.scale_factor),
+                        int(raw_in[2] * self.scale_factor),
+                    ]
+                if manual:
+                    last_active_target = [out_m1, out_m2, out_m3]
+
+                target_m = [0, 0, 0]
+
+                if sys_state == "STARTING":
+                    target_m = [self.config["safe_pos"]] * 3
+                    if current_m == target_m:
+                        sys_state = "ACTIVE"
+                        self.gui_queue.put({"type": "STATE_UPDATE", "state": sys_state})
+
+                elif sys_state == "ACTIVE":
+                    target_m = last_active_target
+
+                elif sys_state == "STOPPING":
+                    target_m = [0, 0, 0]
+                    if current_m == target_m:
+                        sys_state = "STOPPED"
+                        silence_countdown = int(self.config["hz"] * 2)
+                        self.gui_queue.put({"type": "STATE_UPDATE", "state": sys_state})
+
+                elif sys_state == "STOPPED":
+                    target_m = [0, 0, 0]
+
+                # --- 4. Apply Split Slew Rate Limit (Max Delta) ---
+                if sys_state in ["STARTING", "STOPPING"] or manual:
+                    active_delta = self.config["max_delta_manual"]
                 else:
-                    out_m1 = out_m2 = out_m3 = self.config["safe_pos"]
-                    if silence_countdown > 0:
-                        should_send_motion = True
-                        silence_countdown -= 1
+                    active_delta = self.config["max_delta_auto"]
 
-                # --- 4. Send Motion Packets ---
+                if sys_state != "STOPPED":
+                    should_send_motion = True
+                    for i in range(3):
+                        diff = target_m[i] - current_m[i]
+                        if diff > active_delta:
+                            diff = active_delta
+                        elif diff < -active_delta:
+                            diff = -active_delta
+                        current_m[i] += diff
+                elif silence_countdown > 0:
+                    should_send_motion = True
+                    silence_countdown -= 1
+
+                if not manual:
+                    self.gui_queue.put(
+                        {
+                            "type": "TARGET_UPDATE",
+                            "m1": current_m[0],
+                            "m2": current_m[1],
+                            "m3": current_m[2],
+                        }
+                    )
+
+                # --- 5. Send Motion Packets ---
                 if should_send_motion:
-                    # To Rig
                     try:
-                        pkt = IMAXProtocol.pack_motion_data(out_m1, out_m2, out_m3)
+                        pkt = IMAXProtocol.pack_motion_data(
+                            current_m[0], current_m[1], current_m[2]
+                        )
                         sock_tx.sendto(
                             pkt, (self.config["vega_ip"], self.config["vega_port"])
                         )
-                        if debug:
-                            self.gui_queue.put(
-                                {
-                                    "type": "LOG",
-                                    "data": f"[NET TX MOTION] -> {self.config['vega_ip']}:{self.config['vega_port']} | Payload: {pkt.hex()}",
-                                }
-                            )
-                    except Exception as e:
-                        if debug:
-                            self.gui_queue.put(
-                                {
-                                    "type": "LOG",
-                                    "data": f"[NET TX ERROR] Motion send failed: {e}",
-                                }
-                            )
+                    except Exception:
+                        pass
 
-                    # To Visualizer (ONLY if the GUI says it's running)
                     if vis_running:
                         try:
                             vis_data = json.dumps(
-                                {"m1": out_m1, "m2": out_m2, "m3": out_m3}
+                                {
+                                    "m1": current_m[0],
+                                    "m2": current_m[1],
+                                    "m3": current_m[2],
+                                }
                             ).encode("utf-8")
                             sock_vis.sendto(vis_data, ("127.0.0.1", self.vis_port))
-                            if debug:
-                                self.gui_queue.put(
-                                    {
-                                        "type": "LOG",
-                                        "data": f"[NET TX VISUALIZER] -> 127.0.0.1:{self.vis_port} | Payload: {vis_data}",
-                                    }
-                                )
-                        except Exception as e:
-                            if debug:
-                                self.gui_queue.put(
-                                    {
-                                        "type": "LOG",
-                                        "data": f"[NET TX ERROR] Visualizer send failed: {e}",
-                                    }
-                                )
+                        except Exception:
+                            pass
 
-                # --- 5. Debug Logging (Rate Limited) ---
+                # --- 6. Debug Logging ---
                 if debug and (time.time() - last_log_time > 0.5):
                     if should_send_motion:
-                        if active and not manual:
-                            log_msg = f"[AUTO] In: {raw_in} -> Out: [{out_m1}, {out_m2}, {out_m3}]"
-                        elif manual:
-                            log_msg = f"[MANUAL] Out: [{out_m1}, {out_m2}, {out_m3}]"
-                        else:
-                            log_msg = f"[PARKING] Out: [{out_m1}, {out_m2}, {out_m3}]"
+                        log_msg = f"[{sys_state}] Tgt: {target_m} -> Out: {current_m}"
                     else:
-                        log_msg = "[SILENT] Network Idle"
-
+                        log_msg = "[STOPPED] Network Idle (Rig at Zero)"
                     self.gui_queue.put({"type": "LOG", "data": log_msg})
                     last_log_time = time.time()
 
-                # --- 6. 20Hz Timing ---
+                # --- 7. Dynamic Hz Timing ---
+                sleep_time = 1.0 / self.config["hz"]
                 elapsed = time.time() - loop_start
-                if elapsed < 0.050:
-                    time.sleep(0.050 - elapsed)
+                if elapsed < sleep_time:
+                    time.sleep(sleep_time - elapsed)
                 elif debug:
                     self.gui_queue.put(
                         {
                             "type": "LOG",
-                            "data": f"[NET TIMING WARNING] Loop took {elapsed*1000:.1f}ms (Exceeded 50ms budget!)",
+                            "data": f"[NET TIMING WARNING] Loop took {elapsed*1000:.1f}ms (Exceeded {sleep_time*1000:.1f}ms budget!)",
                         }
                     )
 

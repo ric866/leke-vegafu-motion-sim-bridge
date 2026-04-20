@@ -28,11 +28,9 @@ class LiveVisualizer:
         if self.debug:
             print(f"[VIS INIT] Starting Visualizer Engine on Port {self.port}")
 
-        # Setup Figure
         self.fig = plt.figure(figsize=(8, 6))
         self.ax = self.fig.add_subplot(111, projection="3d")
 
-        # Start receiver thread
         self.rx_thread = threading.Thread(target=self._receive_data, daemon=True)
         self.rx_thread.start()
 
@@ -40,17 +38,13 @@ class LiveVisualizer:
         if self.debug:
             print("[VIS THREAD] Receiver thread started.")
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-
-        # CRITICAL: Allow the port to be immediately reused if the script is restarted
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-
         sock.bind(("127.0.0.1", self.port))
         sock.settimeout(0.5)
 
         while self.running:
             try:
                 data, addr = sock.recvfrom(1024)
-
                 msg = json.loads(data.decode("utf-8"))
                 if "m1" in msg:
                     self.current_frame = [msg["m1"], msg["m2"], msg["m3"]]
@@ -107,19 +101,16 @@ class LiveVisualizer:
     def start(self):
         if self.debug:
             print("[VIS START] Attaching animation loop to Matplotlib figure.")
-
-        # Connect explicit close event hook
         self.fig.canvas.mpl_connect("close_event", self.on_close)
-
         self.ani = animation.FuncAnimation(
             self.fig, self.update_scene, interval=50, cache_frame_data=False
         )
-        plt.show()  # This blocks until the window is closed
+        plt.show()
 
         self.running = False
         if self.debug:
             print("[VIS SHUTDOWN] Safely exiting visualizer process.")
-        sys.exit(0)  # Guarantee the process dies immediately to release the port
+        sys.exit(0)
 
     def on_close(self, event):
         self.running = False
@@ -127,9 +118,6 @@ class LiveVisualizer:
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 9001
-
-    # Check if a second argument '1' was passed by the GUI to enable debug
     is_debug = True if len(sys.argv) > 2 and sys.argv[2] == "1" else False
-
     vis = LiveVisualizer(port, debug=is_debug)
     vis.start()

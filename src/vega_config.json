@@ -1,0 +1,11 @@
+{
+    "bind_ip": "192.168.42.230",
+    "rx_port": 10000,
+    "tx_port": 8410,
+    "vega_ip": "192.168.15.201",
+    "vega_port": 7408,
+    "safe_pos": 120000,
+    "hz": 20,
+    "max_delta_auto": 8000,
+    "max_delta_manual": 2000
+}
