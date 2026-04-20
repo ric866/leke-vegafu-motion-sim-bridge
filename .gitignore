@@ -8,6 +8,7 @@ venv/
 
 # Outputs (CRITICAL)
 *.log
+vega_config.json
 
 # IDE Settings
 .idea/
