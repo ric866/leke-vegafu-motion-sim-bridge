@@ -377,12 +377,26 @@ class VegaGUI:
             return
 
         try:
-            script_path = os.path.join(os.path.dirname(__file__), "visualizer.py")
             debug_arg = "1" if self.debug_mode.get() else "0"
-            self.vis_process = subprocess.Popen(
-                [sys.executable, script_path, "9001", debug_arg]
-            )
-            self.log("[SYSTEM] Launched Live 3D Visualizer on port 9001.")
+
+            # Check if running as a PyInstaller compiled executable
+            if getattr(sys, "frozen", False):
+                # When frozen, sys.executable points to VegaMissionControl.exe
+                # We launch a second instance of ourself, passing the secret flag
+                self.vis_process = subprocess.Popen(
+                    [sys.executable, "--run-visualizer", "9001", debug_arg]
+                )
+                self.log(
+                    "[SYSTEM] Launched Live 3D Visualizer from inside compiled EXE."
+                )
+            else:
+                # When running normally from source code (e.g., via VS Code)
+                script_path = os.path.join(os.path.dirname(__file__), "visualizer.py")
+                self.vis_process = subprocess.Popen(
+                    [sys.executable, script_path, "9001", debug_arg]
+                )
+                self.log("[SYSTEM] Launched Live 3D Visualizer from script file.")
+
             self.push_state()
         except Exception as e:
             self.log(f"[ERROR] Could not launch visualizer: {e}")
