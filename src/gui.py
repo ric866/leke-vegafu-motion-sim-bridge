@@ -35,7 +35,9 @@ class VegaGUI:
 
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.root.title("Vega Mission Control (Modular & Verbose)")
-        self.root.geometry("850x750")
+        self.root.geometry(
+            "850x880"
+        )  # Restored larger height to accommodate new tuning fields
 
         # --- State Variables ---
         self.system_active = False
@@ -50,10 +52,12 @@ class VegaGUI:
 
         self.feedback_m1 = tk.StringVar(value="---")
         self.feedback_m2 = tk.StringVar(value="---")
-        self.feedback_m3 = tk.StringVar(value="---")  # <--- FIXED: Added tk. prefix
+        self.feedback_m3 = tk.StringVar(value="---")
 
         # --- JSON Config Loader ---
         self.config_path = os.path.join(get_app_dir(), "vega_config.json")
+
+        # Default Configuration including restored Tuning/Limits
         self.current_config = {
             "bind_ip": "127.0.0.1",
             "rx_port": 10000,
@@ -61,6 +65,11 @@ class VegaGUI:
             "vega_ip": "192.168.15.201",
             "vega_port": 7408,
             "safe_pos": 120000,
+            "hz": 20,
+            "max_delta_auto": 8000,
+            "max_delta_manual": 2000,
+            "min_limit": 0,
+            "max_limit": 240000,
         }
 
         # Try to load existing file
@@ -79,6 +88,17 @@ class VegaGUI:
         self.conf_vega_ip = tk.StringVar(value=str(self.current_config["vega_ip"]))
         self.conf_vega_port = tk.StringVar(value=str(self.current_config["vega_port"]))
         self.conf_safe_pos = tk.StringVar(value=str(self.current_config["safe_pos"]))
+
+        # Restored Tuning Variables
+        self.conf_hz = tk.StringVar(value=str(self.current_config["hz"]))
+        self.conf_max_delta_auto = tk.StringVar(
+            value=str(self.current_config["max_delta_auto"])
+        )
+        self.conf_max_delta_manual = tk.StringVar(
+            value=str(self.current_config["max_delta_manual"])
+        )
+        self.conf_min_limit = tk.StringVar(value=str(self.current_config["min_limit"]))
+        self.conf_max_limit = tk.StringVar(value=str(self.current_config["max_limit"]))
 
         self.pa_params = {
             0x00: "Working Mode (0: 485, 10: CAN)",
@@ -118,7 +138,10 @@ class VegaGUI:
         tab = ttk.Frame(self.notebook)
         self.notebook.add(tab, text="1. Motion & Control")
 
-        frame_config = ttk.LabelFrame(tab, text="Network Configuration", padding=10)
+        # --- Network & Tuning Config ---
+        frame_config = ttk.LabelFrame(
+            tab, text="Network & Tuning Configuration", padding=10
+        )
         frame_config.pack(fill="x", padx=10, pady=5)
 
         ttk.Label(frame_config, text="Local Bind IP:").grid(
@@ -133,11 +156,19 @@ class VegaGUI:
         cb_interfaces.grid(row=0, column=1, sticky="w")
 
         ttk.Label(frame_config, text="FlyPT Port (In):").grid(
-            row=1, column=0, sticky="e", padx=5, pady=2
+            row=0, column=2, sticky="e", padx=5, pady=2
         )
         ttk.Entry(frame_config, textvariable=self.conf_rx_port, width=10).grid(
+            row=0, column=3, sticky="w"
+        )
+
+        ttk.Label(frame_config, text="Vega IP:").grid(
+            row=1, column=0, sticky="e", padx=5, pady=2
+        )
+        ttk.Entry(frame_config, textvariable=self.conf_vega_ip, width=15).grid(
             row=1, column=1, sticky="w"
         )
+
         ttk.Label(frame_config, text="Reply Port (Out):").grid(
             row=1, column=2, sticky="e", padx=5, pady=2
         )
@@ -145,12 +176,13 @@ class VegaGUI:
             row=1, column=3, sticky="w"
         )
 
-        ttk.Label(frame_config, text="Vega IP:").grid(
+        ttk.Label(frame_config, text="Safe Position:").grid(
             row=2, column=0, sticky="e", padx=5, pady=2
         )
-        ttk.Entry(frame_config, textvariable=self.conf_vega_ip, width=15).grid(
+        ttk.Entry(frame_config, textvariable=self.conf_safe_pos, width=10).grid(
             row=2, column=1, sticky="w"
         )
+
         ttk.Label(frame_config, text="Vega Port:").grid(
             row=2, column=2, sticky="e", padx=5, pady=2
         )
@@ -158,23 +190,83 @@ class VegaGUI:
             row=2, column=3, sticky="w"
         )
 
+        # Restored UI Tuning Rows
+        ttk.Label(frame_config, text="Loop Rate (Hz):").grid(
+            row=3, column=0, sticky="e", padx=5, pady=2
+        )
+        ttk.Entry(frame_config, textvariable=self.conf_hz, width=10).grid(
+            row=3, column=1, sticky="w"
+        )
+
+        ttk.Label(frame_config, text="Min Stroke Limit:").grid(
+            row=4, column=0, sticky="e", padx=5, pady=2
+        )
+        ttk.Entry(frame_config, textvariable=self.conf_min_limit, width=10).grid(
+            row=4, column=1, sticky="w"
+        )
+
+        ttk.Label(frame_config, text="Max Stroke Limit:").grid(
+            row=4, column=2, sticky="e", padx=5, pady=2
+        )
+        ttk.Entry(frame_config, textvariable=self.conf_max_limit, width=10).grid(
+            row=4, column=3, sticky="w"
+        )
+
+        ttk.Label(frame_config, text="Auto Max Delta:").grid(
+            row=5, column=0, sticky="e", padx=5, pady=2
+        )
+        ttk.Entry(frame_config, textvariable=self.conf_max_delta_auto, width=10).grid(
+            row=5, column=1, sticky="w"
+        )
+
+        ttk.Label(frame_config, text="Manual/Park Delta:").grid(
+            row=5, column=2, sticky="e", padx=5, pady=2
+        )
+        ttk.Entry(frame_config, textvariable=self.conf_max_delta_manual, width=10).grid(
+            row=5, column=3, sticky="w"
+        )
+
         ttk.Button(
             frame_config,
-            text="APPLY NETWORK SETTINGS",
+            text="APPLY & SAVE SETTINGS",
             command=self._save_and_push_config,
-        ).grid(row=3, column=0, columnspan=4, pady=10)
+        ).grid(row=6, column=0, columnspan=4, pady=10)
 
-        self.btn_safety = tk.Button(
-            tab,
-            text="SYSTEM STOPPED",
+        # --- System Controls ---
+        frame_sys = ttk.LabelFrame(tab, text="System Control", padding=10)
+        frame_sys.pack(fill="x", padx=10, pady=5)
+
+        self.lbl_status = tk.Label(
+            frame_sys,
+            text="STOPPED",
             bg="#ff4444",
             fg="white",
-            font=("Arial", 12, "bold"),
-            height=2,
-            command=self.toggle_system,
+            font=("Arial", 14, "bold"),
+            width=12,
         )
-        self.btn_safety.pack(fill="x", padx=10, pady=10)
+        self.lbl_status.pack(side="left", padx=10)
 
+        self.btn_start = tk.Button(
+            frame_sys,
+            text="START RIG",
+            bg="#44cc44",
+            fg="white",
+            font=("Arial", 12, "bold"),
+            command=self.req_start,
+        )
+        self.btn_start.pack(side="left", fill="x", expand=True, padx=5)
+
+        self.btn_stop = tk.Button(
+            frame_sys,
+            text="STOP & PARK",
+            bg="#ffaa00",
+            fg="black",
+            font=("Arial", 12, "bold"),
+            command=self.req_stop,
+        )
+        self.btn_stop.pack(side="left", fill="x", expand=True, padx=5)
+
+        # --- Manual Controls ---
         frame_controls = ttk.LabelFrame(tab, text="Manual Override", padding=10)
         frame_controls.pack(fill="x", padx=10, pady=5)
         ttk.Checkbutton(
@@ -194,6 +286,7 @@ class VegaGUI:
             frame_controls, "Axis 3", self.slider_m3, self.feedback_m3
         )
 
+        # --- Visualizer Launcher ---
         frame_vis = ttk.LabelFrame(tab, text="Live 3D Motion", padding=10)
         frame_vis.pack(fill="x", padx=10, pady=5)
         ttk.Label(
@@ -331,20 +424,19 @@ class VegaGUI:
 
             # COMPILED EXE SAFE LAUNCH
             if getattr(sys, "frozen", False):
-                # Reroute back through the .exe itself
                 self.vis_process = subprocess.Popen(
                     [sys.executable, "--visualizer", "9001", debug_arg]
                 )
+                self.log(
+                    "[SYSTEM] Launched Live 3D Visualizer from inside compiled EXE."
+                )
             else:
-                # Normal python script launch
                 script_path = os.path.join(os.path.dirname(__file__), "main.py")
                 self.vis_process = subprocess.Popen(
                     [sys.executable, script_path, "--visualizer", "9001", debug_arg]
                 )
+                self.log("[SYSTEM] Launched Live 3D Visualizer from script file.")
 
-            self.log(
-                "[SYSTEM] Launched Live 3D Visualizer on port 9001. Check terminal for renderer logs."
-            )
             self.push_state()
         except Exception as e:
             self.log(f"[ERROR] Could not launch visualizer: {e}")
@@ -353,13 +445,23 @@ class VegaGUI:
         if not silent and self.debug_mode.get():
             self.log("[GUI CLICK] Apply Network Settings Button")
         try:
-            # Update Local Variables
+            # Update Local Variables including the restored tuning limits
             self.current_config["bind_ip"] = self.conf_bind_ip.get()
             self.current_config["rx_port"] = int(self.conf_rx_port.get())
             self.current_config["tx_port"] = int(self.conf_tx_port.get())
             self.current_config["vega_ip"] = self.conf_vega_ip.get()
             self.current_config["vega_port"] = int(self.conf_vega_port.get())
             self.current_config["safe_pos"] = int(self.conf_safe_pos.get())
+
+            self.current_config["hz"] = max(1, int(self.conf_hz.get()))
+            self.current_config["max_delta_auto"] = max(
+                1, int(self.conf_max_delta_auto.get())
+            )
+            self.current_config["max_delta_manual"] = max(
+                1, int(self.conf_max_delta_manual.get())
+            )
+            self.current_config["min_limit"] = int(self.conf_min_limit.get())
+            self.current_config["max_limit"] = int(self.conf_max_limit.get())
 
             # Save to JSON
             try:
@@ -376,17 +478,17 @@ class VegaGUI:
                 self.log("[GUI] Pushed new network config to backend.")
 
         except ValueError:
-            self.log("[ERROR] Port and Safe Position values must be valid integers.")
+            self.log("[ERROR] Configuration values must be valid integers.")
 
-    def toggle_system(self):
-        self.system_active = not self.system_active
+    def req_start(self):
         if self.debug_mode.get():
-            self.log(f"[GUI CLICK] System Power Button -> Active: {self.system_active}")
-        self.btn_safety.config(
-            text="SYSTEM ACTIVE" if self.system_active else "SYSTEM STOPPED",
-            bg="#44cc44" if self.system_active else "#ff4444",
-        )
-        self.push_state()
+            self.log("[GUI CLICK] Start Rig")
+        self.cmd_queue.put({"type": "SYS_CMD", "cmd": "START"})
+
+    def req_stop(self):
+        if self.debug_mode.get():
+            self.log("[GUI CLICK] Stop & Park Rig")
+        self.cmd_queue.put({"type": "SYS_CMD", "cmd": "STOP"})
 
     def push_state(self):
         is_vis_running = (
@@ -461,6 +563,19 @@ class VegaGUI:
             msg = self.gui_queue.get_nowait()
             if msg["type"] == "LOG":
                 self.log(msg["data"])
+
+            # Restored the STATE_UPDATE status bar logic
+            elif msg["type"] == "STATE_UPDATE":
+                state = msg["state"]
+                if state == "STOPPED":
+                    self.lbl_status.config(text="STOPPED", bg="#ff4444", fg="white")
+                elif state == "STARTING":
+                    self.lbl_status.config(text="STARTING...", bg="#ffaa00", fg="black")
+                elif state == "ACTIVE":
+                    self.lbl_status.config(text="ACTIVE", bg="#44cc44", fg="white")
+                elif state == "STOPPING":
+                    self.lbl_status.config(text="PARKING...", bg="#ffaa00", fg="black")
+
             elif msg["type"] == "TARGET_UPDATE" and not self.manual_mode.get():
                 self.slider_m1.set(msg["m1"])
                 self.slider_m2.set(msg["m2"])
