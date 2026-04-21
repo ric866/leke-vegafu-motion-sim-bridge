@@ -67,7 +67,7 @@ Live 3D Motion: Launches the external 3D viewer. Close the viewer by clicking th
 
 Tab 2: Controller Flash
 Allows you to read/write internal PA parameters (e.g., Maximum Speed, Safety Strokes).
-## Your PC must be on the Controllers Master IP Address. ##
+ Your PC must be on the Controllers Master IP Address.
 
 Click Read All to fetch the current state of the rig.
 
